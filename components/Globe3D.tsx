@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useMemo, useCallback } from 'react';
 import Globe, { GlobeMethods } from 'react-globe.gl';
 import { CountryData, GameState } from '../types';
@@ -65,7 +64,7 @@ const Globe3D: React.FC<Globe3DProps> = ({
     let isFirstFrame = true;
 
     const render = () => {
-      if (!canvas || !globeRef.current) return;
+      if (!canvas) return;
       
       // Resize if needed
       if (canvas.width !== width || canvas.height !== height) {
@@ -76,35 +75,37 @@ const Globe3D: React.FC<Globe3DProps> = ({
       ctx.clearRect(0, 0, width, height);
       
       // Get Globe Rotation
-      const controls = globeRef.current.controls();
-      let dx = 0;
+      let dx = 0.05; // Default subtle drift
       let dy = 0;
 
-      if (controls) {
-        const az = controls.getAzimuthalAngle(); // -PI to PI
-        const pol = controls.getPolarAngle(); // 0 to PI
-
-        if (!isFirstFrame) {
-            // Calculate delta
-            let dAz = az - prevAzimuth;
-            let dPol = pol - prevPolar;
-            
-            // Handle wrap-around for azimuth
-            if (dAz > Math.PI) dAz -= 2 * Math.PI;
-            if (dAz < -Math.PI) dAz += 2 * Math.PI;
-
-            // Sensitivity factor (Stars at infinity move slower than foreground)
-            const factor = 150; 
-            dx = dAz * factor;
-            dy = dPol * factor;
+      if (globeRef.current) {
+        const controls = globeRef.current.controls();
+        if (controls) {
+            const az = controls.getAzimuthalAngle(); // -PI to PI
+            const pol = controls.getPolarAngle(); // 0 to PI
+    
+            if (!isFirstFrame) {
+                // Calculate delta
+                let dAz = az - prevAzimuth;
+                let dPol = pol - prevPolar;
+                
+                // Handle wrap-around for azimuth
+                if (dAz > Math.PI) dAz -= 2 * Math.PI;
+                if (dAz < -Math.PI) dAz += 2 * Math.PI;
+    
+                // Sensitivity factor (Stars at infinity move slower than foreground)
+                const factor = 150; 
+                dx = dAz * factor;
+                dy = dPol * factor;
+            }
+    
+            prevAzimuth = az;
+            prevPolar = pol;
+            isFirstFrame = false;
+        } else if (gameStatus === 'menu') {
+            // Auto rotate effect for menu
+            dx = 0.2;
         }
-
-        prevAzimuth = az;
-        prevPolar = pol;
-        isFirstFrame = false;
-      } else if (gameStatus === 'menu') {
-          // Auto rotate effect for menu
-          dx = 0.2;
       }
 
       // Draw Stars
@@ -174,7 +175,8 @@ const Globe3D: React.FC<Globe3DProps> = ({
   const getPolygonColor = useCallback((d: any) => {
     const countryId = d.properties.data.id;
     if (foundIds.has(countryId)) return 'rgba(76, 201, 240, 0.9)'; 
-    if (hintIds && hintIds.has(countryId)) return 'rgba(255, 255, 255, 0.3)'; 
+    // Illuminated visual hint (Gold/Amber) - brighter for visibility
+    if (hintIds && hintIds.has(countryId)) return 'rgba(255, 190, 11, 0.5)'; 
     return 'rgba(20, 30, 50, 0.3)';
   }, [foundIds, hintIds]);
 

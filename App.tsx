@@ -221,14 +221,14 @@ function App() {
     setFoundList([]);
     
     // --- CINEMATIC INTRO ---
-    // 1. Start far away in space
-    setTargetLocation({ lat: 0, lng: 0, altitude: 3.5 });
+    // 1. Start far away in space immediately
+    setTargetLocation({ lat: 0, lng: 0, altitude: 3.8 });
     
-    // 2. Zoom in to the target region after a brief moment
+    // 2. Zoom in to the target region after a delay to allow the "Fly out" to be felt
     const cam = REGION_CAMERAS[region] || REGION_CAMERAS['World'];
     setTimeout(() => {
        setTargetLocation(cam); 
-    }, 100);
+    }, 600);
 
     setGameState({
       status: 'playing',
@@ -247,7 +247,7 @@ function App() {
     // Show "Get Ready"
     setTimeout(() => {
       addFloater("GO !", window.innerWidth / 2, window.innerHeight / 2, '#4cc9f0');
-    }, 1000);
+    }, 1500);
   };
 
   useEffect(() => {
