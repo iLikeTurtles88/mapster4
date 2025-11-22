@@ -225,10 +225,11 @@ function App() {
     setTargetLocation({ lat: 20, lng: 0, altitude: 4.5 });
     
     // 2. Zoom in to the target region after a delay to allow the "Fly out" to be felt
+    // Faster timing (500ms) for a snappier feel
     const cam = REGION_CAMERAS[region] || REGION_CAMERAS['World'];
     setTimeout(() => {
        setTargetLocation(cam); 
-    }, 800);
+    }, 500);
 
     setGameState({
       status: 'playing',

@@ -176,8 +176,8 @@ const Globe3D: React.FC<Globe3DProps> = ({
   const getPolygonColor = useCallback((d: any) => {
     const countryId = d.properties.data.id;
     if (foundIds.has(countryId)) return 'rgba(76, 201, 240, 0.9)'; 
-    // Illuminated visual hint (Bright Gold) - High visibility
-    if (hintIds && hintIds.has(countryId)) return 'rgba(255, 215, 0, 0.75)'; 
+    // Illuminated visual hint (Bright Yellow/Gold) - High visibility against dark background
+    if (hintIds && hintIds.has(countryId)) return 'rgba(255, 230, 0, 0.9)'; 
     return 'rgba(20, 30, 50, 0.3)';
   }, [foundIds, hintIds]);
 
