@@ -64,9 +64,9 @@ const Globe3D: React.FC<Globe3DProps> = ({
     let isFirstFrame = true;
 
     const render = () => {
-      if (!canvas) return;
+      if (!canvas || !ctx) return;
       
-      // Resize if needed
+      // Resize if needed (handle canvas buffer size mismatch)
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
@@ -143,7 +143,7 @@ const Globe3D: React.FC<Globe3DProps> = ({
   // --- CAMERA TRANSITIONS ---
   useEffect(() => {
     if (targetLocation && globeRef.current) {
-      globeRef.current.pointOfView(targetLocation, 1500);
+      globeRef.current.pointOfView(targetLocation, 1200);
     }
   }, [targetLocation]);
 
@@ -159,6 +159,7 @@ const Globe3D: React.FC<Globe3DProps> = ({
         controls.minDistance = 120;
         controls.maxDistance = 450;
         
+        // Fix render quality
         globeRef.current.renderer().setPixelRatio(rendererConfig.pixelRatio);
       }
     }
@@ -175,8 +176,8 @@ const Globe3D: React.FC<Globe3DProps> = ({
   const getPolygonColor = useCallback((d: any) => {
     const countryId = d.properties.data.id;
     if (foundIds.has(countryId)) return 'rgba(76, 201, 240, 0.9)'; 
-    // Illuminated visual hint (Gold/Amber) - brighter for visibility
-    if (hintIds && hintIds.has(countryId)) return 'rgba(255, 190, 11, 0.5)'; 
+    // Illuminated visual hint (Bright Gold) - High visibility
+    if (hintIds && hintIds.has(countryId)) return 'rgba(255, 215, 0, 0.75)'; 
     return 'rgba(20, 30, 50, 0.3)';
   }, [foundIds, hintIds]);
 
@@ -230,7 +231,7 @@ const Globe3D: React.FC<Globe3DProps> = ({
             polygonStrokeColor={getPolygonStrokeColor}
             onPolygonClick={handlePolygonClick}
             onPolygonHover={handlePolygonHover}
-            polygonsTransitionDuration={150}
+            polygonsTransitionDuration={300} // Smoother transition for hints
             polygonLabel={getPolygonLabel}
             ringsData={rings}
             ringColor={getRingColor}
