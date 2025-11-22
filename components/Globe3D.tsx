@@ -1,13 +1,13 @@
+
 import React, { useEffect, useRef, useMemo, useCallback } from 'react';
 import Globe, { GlobeMethods } from 'react-globe.gl';
-import * as THREE from 'three';
 import { CountryData, GameState } from '../types';
 import { COLORS } from '../constants';
 
 interface Globe3DProps {
   countries: CountryData[];
   foundIds: Set<string>;
-  hintIds?: Set<string>; // IDs à mettre en surbrillance légère
+  hintIds?: Set<string>;
   gameStatus: GameState['status'];
   onPolygonClick: (country: CountryData) => void;
   width: number;
@@ -28,91 +28,135 @@ const Globe3D: React.FC<Globe3DProps> = ({
   rings 
 }) => {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
-  const starsRef = useRef<THREE.Points | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const starCanvasRef = useRef<HTMLCanvasElement>(null);
   
   const isMobile = width < 768;
 
-  // --- PERFORMANCE & VISUAL CONFIG ---
+  // --- PERFORMANCE CONFIG ---
   const rendererConfig = useMemo(() => ({
     powerPreference: "high-performance" as const,
     antialias: !isMobile, 
     pixelRatio: typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, isMobile ? 1.2 : 1.5) : 1,
-    stencil: false,
-    depth: true,
     alpha: true
   }), [isMobile]);
 
-  // --- STARFIELD GENERATION (3D SCENE) ---
+  // --- STARFIELD SYNC WITH GLOBE ROTATION ---
   useEffect(() => {
-    if (!globeRef.current) return;
-    
-    const scene = globeRef.current.scene();
-    if (starsRef.current) return; // Déjà créé
+    const canvas = starCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    // Création d'un nuage de points pour les étoiles
-    const starGeometry = new THREE.BufferGeometry();
-    const starCount = 3500;
-    const positions = new Float32Array(starCount * 3);
-    const sizes = new Float32Array(starCount);
+    // Init stars
+    const starCount = isMobile ? 400 : 1000;
+    const stars = Array.from({ length: starCount }).map(() => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      size: Math.random() * (Math.random() > 0.9 ? 2.5 : 1.5),
+      alpha: Math.random() * 0.8 + 0.2,
+      twinkleSpeed: Math.random() * 0.02 + 0.005,
+      twinklePhase: Math.random() * Math.PI * 2
+    }));
 
-    for (let i = 0; i < starCount; i++) {
-      // Distribution sphérique aléatoire (loin du centre)
-      const r = 300 + Math.random() * 200; // Rayon entre 300 et 500
-      const theta = 2 * Math.PI * Math.random();
-      const phi = Math.acos(2 * Math.random() - 1);
+    let frameId: number;
+    let prevAzimuth = 0;
+    let prevPolar = 0;
+    let isFirstFrame = true;
+
+    const render = () => {
+      if (!canvas || !globeRef.current) return;
       
-      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = r * Math.cos(phi);
-      
-      sizes[i] = Math.random() * 1.5;
-    }
-
-    starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-    const starMaterial = new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 1.2,
-      transparent: true,
-      opacity: 0.8,
-      sizeAttenuation: false // Les étoiles gardent la même taille quelle que soit la distance (effet Arcade)
-    });
-
-    const stars = new THREE.Points(starGeometry, starMaterial);
-    scene.add(stars);
-    starsRef.current = stars;
-
-    // Cleanup à la désactivation (rare dans ce contexte, mais bonne pratique)
-    return () => {
-      if (starsRef.current) {
-        scene.remove(starsRef.current);
-        starGeometry.dispose();
-        starMaterial.dispose();
-        starsRef.current = null;
+      // Resize if needed
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
       }
-    };
-  }, []);
 
+      ctx.clearRect(0, 0, width, height);
+      
+      // Get Globe Rotation
+      const controls = globeRef.current.controls();
+      let dx = 0;
+      let dy = 0;
+
+      if (controls) {
+        const az = controls.getAzimuthalAngle(); // -PI to PI
+        const pol = controls.getPolarAngle(); // 0 to PI
+
+        if (!isFirstFrame) {
+            // Calculate delta
+            let dAz = az - prevAzimuth;
+            let dPol = pol - prevPolar;
+            
+            // Handle wrap-around for azimuth
+            if (dAz > Math.PI) dAz -= 2 * Math.PI;
+            if (dAz < -Math.PI) dAz += 2 * Math.PI;
+
+            // Sensitivity factor (Stars at infinity move slower than foreground)
+            const factor = 150; 
+            dx = dAz * factor;
+            dy = dPol * factor;
+        }
+
+        prevAzimuth = az;
+        prevPolar = pol;
+        isFirstFrame = false;
+      } else if (gameStatus === 'menu') {
+          // Auto rotate effect for menu
+          dx = 0.2;
+      }
+
+      // Draw Stars
+      ctx.fillStyle = '#FFF';
+      const time = Date.now() / 1000;
+
+      stars.forEach(star => {
+        // Update position based on camera movement
+        star.x += dx;
+        star.y += dy;
+
+        // Wrap around screen
+        if (star.x < 0) star.x += width;
+        if (star.x > width) star.x -= width;
+        if (star.y < 0) star.y += height;
+        if (star.y > height) star.y -= height;
+
+        // Twinkle
+        const opacity = star.alpha * (0.7 + 0.3 * Math.sin(time * 2 + star.twinklePhase));
+        
+        ctx.globalAlpha = opacity;
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.size / 2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      frameId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => cancelAnimationFrame(frameId);
+  }, [width, height, isMobile, gameStatus]);
+
+  // --- CAMERA TRANSITIONS ---
   useEffect(() => {
     if (targetLocation && globeRef.current) {
-      // Transition douce de 1.5s pour la caméra (plus lent pour le cinématique)
       globeRef.current.pointOfView(targetLocation, 1500);
     }
   }, [targetLocation]);
 
+  // --- CONTROLS CONFIG ---
   useEffect(() => {
     if (globeRef.current) {
       const controls = globeRef.current.controls();
       if (controls) {
         controls.autoRotate = gameStatus === 'menu';
-        controls.autoRotateSpeed = 0.6; // Un peu plus rapide pour le dynamisme
+        controls.autoRotateSpeed = 0.6;
         controls.enableDamping = true;
         controls.dampingFactor = 0.1;
-        
-        // Configuration des limites de zoom
-        controls.minDistance = 120; // Zoom max (près)
-        controls.maxDistance = 450; // Zoom min (loin)
+        controls.minDistance = 120;
+        controls.maxDistance = 450;
         
         globeRef.current.renderer().setPixelRatio(rendererConfig.pixelRatio);
       }
@@ -126,39 +170,18 @@ const Globe3D: React.FC<Globe3DProps> = ({
      }));
   }, [countries]);
 
-  // --- ARCADE / HOLOGRAM STYLE ---
+  // --- COLORS & LABELS ---
   const getPolygonColor = useCallback((d: any) => {
     const countryId = d.properties.data.id;
-    
-    // 1. PAYS TROUVÉ: Cyan brillant (effet néon)
-    if (foundIds.has(countryId)) {
-        return 'rgba(76, 201, 240, 0.9)'; 
-    }
-
-    // 2. INDICE VISUEL (Typing): Blanc fantomatique clignotant
-    if (hintIds && hintIds.has(countryId)) {
-        return 'rgba(255, 255, 255, 0.3)'; // Plus visible
-    }
-    
-    // 3. DÉFAUT: Très sombre
+    if (foundIds.has(countryId)) return 'rgba(76, 201, 240, 0.9)'; 
+    if (hintIds && hintIds.has(countryId)) return 'rgba(255, 255, 255, 0.3)'; 
     return 'rgba(20, 30, 50, 0.3)';
   }, [foundIds, hintIds]);
 
   const getPolygonLabel = useCallback((d: any) => {
     if (gameStatus === 'menu') {
         return `
-            <div style="
-                background: rgba(2, 4, 10, 0.8); 
-                padding: 4px 8px; 
-                border-radius: 4px; 
-                border: 1px solid #4cc9f0; 
-                font-family: 'Outfit', sans-serif; 
-                font-weight: 700; 
-                font-size: 10px; 
-                letter-spacing: 1px;
-                color: #fff; 
-                box-shadow: 0 0 10px rgba(76, 201, 240, 0.3);
-            ">
+            <div style="background: rgba(2, 4, 10, 0.8); padding: 4px 8px; border-radius: 4px; border: 1px solid #4cc9f0; font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 10px; letter-spacing: 1px; color: #fff; box-shadow: 0 0 10px rgba(76, 201, 240, 0.3);">
                 ${d.properties.data.frName.toUpperCase()}
             </div>
         `;
@@ -166,7 +189,6 @@ const Globe3D: React.FC<Globe3DProps> = ({
     return "";
   }, [gameStatus]);
 
-  // Frontières fines
   const getPolygonStrokeColor = useCallback(() => 'rgba(76, 201, 240, 0.25)', []);
   const getRingColor = useCallback(() => COLORS.accent, []);
 
@@ -176,47 +198,45 @@ const Globe3D: React.FC<Globe3DProps> = ({
 
   const handlePolygonHover = useCallback((p: any) => {
       const canvas = globeRef.current?.renderer().domElement;
-      if (canvas) {
-          canvas.style.cursor = p ? 'crosshair' : 'grab';
-      }
+      if (canvas) canvas.style.cursor = p ? 'crosshair' : 'grab';
   }, []);
 
   return (
-    <Globe
-      ref={globeRef}
-      width={width}
-      height={height}
-      backgroundColor="rgba(0,0,0,0)"
-      
-      // TEXTURES HOLOGRAPHIQUES
-      globeImageUrl="//unpkg.com/three-globe/example/img/earth-dark.jpg" 
-      bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
-      
-      rendererConfig={rendererConfig}
-      
-      // ATMOSPHERE GLOW
-      showAtmosphere={true}
-      atmosphereColor="#4cc9f0" 
-      atmosphereAltitude={0.18}
-      
-      polygonsData={polygonsData}
-      polygonAltitude={0.01}
-      polygonCapColor={getPolygonColor}
-      polygonSideColor={() => 'rgba(0,0,0,0)'}
-      polygonStrokeColor={getPolygonStrokeColor}
-      onPolygonClick={handlePolygonClick}
-      onPolygonHover={handlePolygonHover}
-      // Transition rapide pour la réactivité des hints (100ms)
-      polygonsTransitionDuration={150}
-      polygonLabel={getPolygonLabel}
-
-      // Pings/Rings
-      ringsData={rings}
-      ringColor={getRingColor}
-      ringMaxRadius={10}
-      ringPropagationSpeed={8}
-      ringRepeatPeriod={0}
-    />
+    <div ref={containerRef} style={{ width, height, position: 'relative', background: '#02040a' }}>
+        {/* Starfield Layer (Behind Globe) */}
+        <canvas 
+            ref={starCanvasRef} 
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+        />
+        
+        {/* Globe Layer */}
+        <Globe
+            ref={globeRef}
+            width={width}
+            height={height}
+            backgroundColor="rgba(0,0,0,0)"
+            globeImageUrl="//unpkg.com/three-globe/example/img/earth-dark.jpg" 
+            bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
+            rendererConfig={rendererConfig}
+            showAtmosphere={true}
+            atmosphereColor="#4cc9f0" 
+            atmosphereAltitude={0.18}
+            polygonsData={polygonsData}
+            polygonAltitude={0.01}
+            polygonCapColor={getPolygonColor}
+            polygonSideColor={() => 'rgba(0,0,0,0)'}
+            polygonStrokeColor={getPolygonStrokeColor}
+            onPolygonClick={handlePolygonClick}
+            onPolygonHover={handlePolygonHover}
+            polygonsTransitionDuration={150}
+            polygonLabel={getPolygonLabel}
+            ringsData={rings}
+            ringColor={getRingColor}
+            ringMaxRadius={10}
+            ringPropagationSpeed={8}
+            ringRepeatPeriod={0}
+        />
+    </div>
   );
 };
 
