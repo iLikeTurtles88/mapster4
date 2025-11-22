@@ -1,8 +1,7 @@
 class AudioController {
   private ctx: AudioContext | null = null;
   private enabled: boolean = true;
-  private ambientOscillators: OscillatorNode[] = [];
-  private ambientGain: GainNode | null = null;
+  private ambientNodes: AudioNode[] = [];
 
   constructor() {
     // Lazy init
@@ -20,7 +19,6 @@ class AudioController {
       if (this.ctx?.state === 'suspended') {
         this.ctx.resume();
       }
-      this.startAmbience();
     } else {
       this.stopAmbience();
     }
@@ -31,141 +29,105 @@ class AudioController {
   }
 
   public startAmbience() {
-    if (!this.enabled || this.ambientOscillators.length > 0) return;
-    this.init();
-    if (!this.ctx) return;
-
-    // Create a deep space drone effect
-    const masterGain = this.ctx.createGain();
-    masterGain.gain.value = 0.15; // Low volume
-    masterGain.connect(this.ctx.destination);
-    this.ambientGain = masterGain;
-
-    // Osc 1: Deep drone
-    const osc1 = this.ctx.createOscillator();
-    osc1.type = 'sine';
-    osc1.frequency.value = 50;
-    
-    // Osc 2: Slight detune for texture
-    const osc2 = this.ctx.createOscillator();
-    osc2.type = 'triangle';
-    osc2.frequency.value = 52;
-
-    // LFO to modulate amplitude slightly (breathing effect)
-    const lfo = this.ctx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 0.1; // Slow pulse
-    const lfoGain = this.ctx.createGain();
-    lfoGain.gain.value = 0.05;
-    
-    lfo.connect(lfoGain.gain);
-    osc1.connect(masterGain);
-    osc2.connect(masterGain);
-
-    osc1.start();
-    osc2.start();
-    lfo.start();
-
-    this.ambientOscillators = [osc1, osc2, lfo];
+    // Réservé pour une future musique de fond
   }
 
   public stopAmbience() {
-    this.ambientOscillators.forEach(osc => {
-      try { osc.stop(); } catch (e) {}
+    this.ambientNodes.forEach(node => {
+      try { node.disconnect(); } catch (e) {}
     });
-    this.ambientOscillators = [];
-    if (this.ambientGain) {
-        this.ambientGain.disconnect();
-        this.ambientGain = null;
-    }
+    this.ambientNodes = [];
   }
 
-  private playTone(freq: number, type: OscillatorType, delay: number, duration: number, vol: number = 0.1) {
-    if (!this.enabled) return;
-    this.init();
-    if (!this.ctx) return;
-
-    const t = this.ctx.currentTime + delay;
+  // Générateur de son synthétique "Glassy"
+  private playSynthTone(freq: number, time: number, duration: number, volume: number = 0.1, type: OscillatorType = 'triangle') {
+    if (!this.enabled || !this.ctx) return;
+    
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
-
-    osc.type = type;
-    osc.frequency.value = freq;
     
+    osc.type = type; 
+    osc.frequency.setValueAtTime(freq, time);
+
+    // Enveloppe plus douce
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(volume, time + 0.03); 
+    gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+
     osc.connect(gain);
     gain.connect(this.ctx.destination);
 
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(vol, t + 0.05);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-
-    osc.start(t);
-    osc.stop(t + duration);
+    osc.start(time);
+    osc.stop(time + duration);
   }
 
   public playCorrect() {
-    // More "crystal" sound
-    this.playTone(523.25, 'sine', 0, 0.3, 0.2); // C5
-    this.playTone(659.25, 'sine', 0.1, 0.3, 0.2); // E5
-    this.playTone(783.99, 'sine', 0.2, 0.4, 0.2); // G5
-    this.playTone(1046.50, 'sine', 0.3, 0.5, 0.1); // C6
+    this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+
+    // Accord Cmaj9 (C, E, G, B, D) étalé pour un effet "Magique/Victoire"
+    // Très satisfaisant pour le cerveau
+    const chord = [523.25, 659.25, 783.99, 987.77, 1174.66];
+    
+    chord.forEach((freq, i) => {
+        this.playSynthTone(freq, t + (i * 0.04), 0.6, 0.08 - (i * 0.01));
+    });
   }
 
   public playWrong() {
-    if (!this.enabled) return;
     this.init();
     if (!this.ctx) return;
-
     const t = this.ctx.currentTime;
+
+    // Son "Buzzer" mais doux, pas agressif
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
-
+    
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(100, t);
-    osc.frequency.exponentialRampToValueAtTime(50, t + 0.4);
+    osc.frequency.linearRampToValueAtTime(60, t + 0.25);
     
+    // Filtre passe-bas pour étouffer le son (moins agressif)
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+
     gain.gain.setValueAtTime(0.15, t);
-    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.4);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.25);
     
-    osc.connect(gain);
+    osc.connect(filter);
+    filter.connect(gain);
     gain.connect(this.ctx.destination);
     
     osc.start(t);
-    osc.stop(t + 0.4);
+    osc.stop(t + 0.25);
   }
 
   public playLevelUp() {
-    this.playTone(440, 'square', 0, 0.4);
-    this.playTone(880, 'square', 0.1, 0.4);
-    this.playTone(1760, 'square', 0.2, 0.6);
+    this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+
+    // Arpège rapide "Power Up"
+    [440, 554, 659, 880, 1108, 1318, 1760].forEach((freq, i) => {
+        this.playSynthTone(freq, t + i * 0.06, 0.4, 0.1, 'sine');
+    });
   }
 
   public playPenalty() {
-    if (!this.enabled) return;
-    this.init();
-    if (!this.ctx) return;
-
+    if (!this.enabled || !this.ctx) return;
     const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(150, t);
-    osc.frequency.linearRampToValueAtTime(100, t + 0.2);
-
-    gain.gain.setValueAtTime(0.1, t);
-    gain.gain.linearRampToValueAtTime(0, t + 0.2);
-
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-
-    osc.start(t);
-    osc.stop(t + 0.2);
+    // Son "Tech glitch"
+    this.playSynthTone(150, t, 0.1, 0.1, 'square');
   }
 
   public playRadarPing() {
-     this.playTone(880, 'sine', 0, 0.1, 0.05);
-     this.playTone(1760, 'sine', 0.1, 0.1, 0.03);
+    this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    // Son pur "Sonar"
+    this.playSynthTone(1600, t, 0.2, 0.05, 'sine');
   }
 }
 

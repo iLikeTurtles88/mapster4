@@ -1,12 +1,13 @@
-
 import React, { useEffect, useRef, useMemo, useCallback } from 'react';
 import Globe, { GlobeMethods } from 'react-globe.gl';
+import * as THREE from 'three';
 import { CountryData, GameState } from '../types';
 import { COLORS } from '../constants';
 
 interface Globe3DProps {
   countries: CountryData[];
   foundIds: Set<string>;
+  hintIds?: Set<string>; // IDs à mettre en surbrillance légère
   gameStatus: GameState['status'];
   onPolygonClick: (country: CountryData) => void;
   width: number;
@@ -18,6 +19,7 @@ interface Globe3DProps {
 const Globe3D: React.FC<Globe3DProps> = ({ 
   countries, 
   foundIds, 
+  hintIds,
   gameStatus, 
   onPolygonClick, 
   width, 
@@ -26,97 +28,156 @@ const Globe3D: React.FC<Globe3DProps> = ({
   rings 
 }) => {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
+  const starsRef = useRef<THREE.Points | null>(null);
+  
+  const isMobile = width < 768;
 
-  // Handle camera focus (generic target location)
+  // --- PERFORMANCE & VISUAL CONFIG ---
+  const rendererConfig = useMemo(() => ({
+    powerPreference: "high-performance" as const,
+    antialias: !isMobile, 
+    pixelRatio: typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, isMobile ? 1.2 : 1.5) : 1,
+    stencil: false,
+    depth: true,
+    alpha: true
+  }), [isMobile]);
+
+  // --- STARFIELD GENERATION (3D SCENE) ---
+  useEffect(() => {
+    if (!globeRef.current) return;
+    
+    const scene = globeRef.current.scene();
+    if (starsRef.current) return; // Déjà créé
+
+    // Création d'un nuage de points pour les étoiles
+    const starGeometry = new THREE.BufferGeometry();
+    const starCount = 3500;
+    const positions = new Float32Array(starCount * 3);
+    const sizes = new Float32Array(starCount);
+
+    for (let i = 0; i < starCount; i++) {
+      // Distribution sphérique aléatoire (loin du centre)
+      const r = 300 + Math.random() * 200; // Rayon entre 300 et 500
+      const theta = 2 * Math.PI * Math.random();
+      const phi = Math.acos(2 * Math.random() - 1);
+      
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = r * Math.cos(phi);
+      
+      sizes[i] = Math.random() * 1.5;
+    }
+
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+    const starMaterial = new THREE.PointsMaterial({
+      color: 0xffffff,
+      size: 1.2,
+      transparent: true,
+      opacity: 0.8,
+      sizeAttenuation: false // Les étoiles gardent la même taille quelle que soit la distance (effet Arcade)
+    });
+
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    scene.add(stars);
+    starsRef.current = stars;
+
+    // Cleanup à la désactivation (rare dans ce contexte, mais bonne pratique)
+    return () => {
+      if (starsRef.current) {
+        scene.remove(starsRef.current);
+        starGeometry.dispose();
+        starMaterial.dispose();
+        starsRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (targetLocation && globeRef.current) {
-      globeRef.current.pointOfView(targetLocation, 1500); // 1.5s smooth animation
+      // Transition douce de 1.5s pour la caméra (plus lent pour le cinématique)
+      globeRef.current.pointOfView(targetLocation, 1500);
     }
   }, [targetLocation]);
 
-  // Auto-rotation logic for Menu mode
   useEffect(() => {
     if (globeRef.current) {
       const controls = globeRef.current.controls();
       if (controls) {
         controls.autoRotate = gameStatus === 'menu';
-        controls.autoRotateSpeed = 0.5;
-        // Enable damping for smoother interaction
+        controls.autoRotateSpeed = 0.6; // Un peu plus rapide pour le dynamisme
         controls.enableDamping = true;
         controls.dampingFactor = 0.1;
+        
+        // Configuration des limites de zoom
+        controls.minDistance = 120; // Zoom max (près)
+        controls.maxDistance = 450; // Zoom min (loin)
+        
+        globeRef.current.renderer().setPixelRatio(rendererConfig.pixelRatio);
       }
     }
-  }, [gameStatus]);
+  }, [gameStatus, rendererConfig]);
 
-  // Memoize polygon data structure for performance
   const polygonsData = useMemo(() => {
      return countries.map(c => ({
        ...c.geoJson,
-       properties: { ...c.geoJson.properties, data: c } // Embed full data for click handler
+       properties: { ...c.geoJson.properties, data: c }
      }));
   }, [countries]);
 
-  // Stable callback for coloring
+  // --- ARCADE / HOLOGRAM STYLE ---
   const getPolygonColor = useCallback((d: any) => {
     const countryId = d.properties.data.id;
     
-    // If found
+    // 1. PAYS TROUVÉ: Cyan brillant (effet néon)
     if (foundIds.has(countryId)) {
-        return COLORS.landFound;
+        return 'rgba(76, 201, 240, 0.9)'; 
     }
 
-    // In 'playing' mode, other countries are dark
-    if (gameStatus === 'playing') {
-       return COLORS.landDefault;
+    // 2. INDICE VISUEL (Typing): Blanc fantomatique clignotant
+    if (hintIds && hintIds.has(countryId)) {
+        return 'rgba(255, 255, 255, 0.3)'; // Plus visible
     }
+    
+    // 3. DÉFAUT: Très sombre
+    return 'rgba(20, 30, 50, 0.3)';
+  }, [foundIds, hintIds]);
 
-    // Menu mode
-    return COLORS.landDefault;
-  }, [foundIds, gameStatus]);
-
-  // Tooltips: Show name only in Menu mode
   const getPolygonLabel = useCallback((d: any) => {
     if (gameStatus === 'menu') {
         return `
             <div style="
-                background: rgba(15, 23, 42, 0.9); 
-                padding: 8px 12px; 
-                border-radius: 8px; 
-                border: 1px solid rgba(76, 201, 240, 0.3); 
+                background: rgba(2, 4, 10, 0.8); 
+                padding: 4px 8px; 
+                border-radius: 4px; 
+                border: 1px solid #4cc9f0; 
                 font-family: 'Outfit', sans-serif; 
                 font-weight: 700; 
-                font-size: 14px; 
-                color: white; 
-                backdrop-filter: blur(4px);
-                pointer-events: none;
-                transform: translateY(-12px);
-                box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-                text-align: center;
+                font-size: 10px; 
+                letter-spacing: 1px;
+                color: #fff; 
+                box-shadow: 0 0 10px rgba(76, 201, 240, 0.3);
             ">
-                ${d.properties.data.frName}
+                ${d.properties.data.frName.toUpperCase()}
             </div>
         `;
     }
     return "";
   }, [gameStatus]);
 
-  // Fully memoized callbacks
-  const getPolygonSideColor = useCallback(() => 'rgba(0,0,0,0)', []);
-  const getPolygonStrokeColor = useCallback(() => COLORS.stroke, []);
+  // Frontières fines
+  const getPolygonStrokeColor = useCallback(() => 'rgba(76, 201, 240, 0.25)', []);
   const getRingColor = useCallback(() => COLORS.accent, []);
 
   const handlePolygonClick = useCallback((p: any) => {
       onPolygonClick(p.properties.data);
   }, [onPolygonClick]);
 
-  // Optimized hover handler
   const handlePolygonHover = useCallback((p: any) => {
       const canvas = globeRef.current?.renderer().domElement;
       if (canvas) {
-          const cursor = p ? 'pointer' : 'grab';
-          if (canvas.style.cursor !== cursor) {
-              canvas.style.cursor = cursor;
-          }
+          canvas.style.cursor = p ? 'crosshair' : 'grab';
       }
   }, []);
 
@@ -126,28 +187,34 @@ const Globe3D: React.FC<Globe3DProps> = ({
       width={width}
       height={height}
       backgroundColor="rgba(0,0,0,0)"
-      globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-      bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
-      backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
       
+      // TEXTURES HOLOGRAPHIQUES
+      globeImageUrl="//unpkg.com/three-globe/example/img/earth-dark.jpg" 
+      bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
+      
+      rendererConfig={rendererConfig}
+      
+      // ATMOSPHERE GLOW
       showAtmosphere={true}
-      atmosphereColor={COLORS.primary}
-      atmosphereAltitude={0.25} // Slightly increased for better visuals
+      atmosphereColor="#4cc9f0" 
+      atmosphereAltitude={0.18}
       
       polygonsData={polygonsData}
-      polygonAltitude={0.012} // Subtle elevation
+      polygonAltitude={0.01}
       polygonCapColor={getPolygonColor}
-      polygonSideColor={getPolygonSideColor}
+      polygonSideColor={() => 'rgba(0,0,0,0)'}
       polygonStrokeColor={getPolygonStrokeColor}
       onPolygonClick={handlePolygonClick}
       onPolygonHover={handlePolygonHover}
-      polygonsTransitionDuration={300}
+      // Transition rapide pour la réactivité des hints (100ms)
+      polygonsTransitionDuration={150}
       polygonLabel={getPolygonLabel}
 
+      // Pings/Rings
       ringsData={rings}
       ringColor={getRingColor}
-      ringMaxRadius={5}
-      ringPropagationSpeed={5}
+      ringMaxRadius={10}
+      ringPropagationSpeed={8}
       ringRepeatPeriod={0}
     />
   );

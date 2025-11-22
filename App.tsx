@@ -11,6 +11,27 @@ import { ALIASES, REGION_CAMERAS } from './constants';
 import { CountryData, GameMode, Region, GameState, UserStats } from './types';
 
 function App() {
+  // --- Window Dimensions & Input Focus Logic ---
+  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [isInputFocused, setIsInputFocused] = useState(false); 
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Debounce resize to avoid globe jitter
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    const handleResize = () => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+            setDimensions({ width: window.innerWidth, height: window.innerHeight });
+        }, 150);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => {
+        window.removeEventListener('resize', handleResize);
+        clearTimeout(timeoutId);
+    };
+  }, []);
+
   // --- Data State ---
   const [allCountries, setAllCountries] = useState<CountryData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,11 +54,12 @@ function App() {
   
   // --- UI State ---
   const [inputValue, setInputValue] = useState('');
+  const [hintIds, setHintIds] = useState<Set<string>>(new Set()); // Visual feedback while typing
+  
   const [showHintModal, setShowHintModal] = useState(false);
   const [hintReveal, setHintReveal] = useState<{ capital?: string; flag?: string } | null>(null);
   const [floaters, setFloaters] = useState<Array<{ id: number; text: string; x: number; y: number; color: string }>>([]);
   
-  // Sound persistence
   const [soundEnabled, setSoundEnabledState] = useState(() => {
       return localStorage.getItem('wa_sound') !== 'false';
   });
@@ -55,9 +77,7 @@ function App() {
   const [targetLocation, setTargetLocation] = useState<{ lat: number; lng: number; altitude: number } | null>(null);
   const [rings, setRings] = useState<any[]>([]);
 
-  // --- Refs ---
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // --- Init ---
@@ -67,7 +87,12 @@ function App() {
       setGameState(prev => ({ ...prev, status: 'menu' }));
       setIsLoading(false);
       
-      // Load stats
+      const loader = document.getElementById('app-loader');
+      if (loader) {
+          loader.style.opacity = '0';
+          setTimeout(() => loader.style.display = 'none', 500);
+      }
+
       const savedXP = localStorage.getItem('wa_xp');
       const savedLvl = localStorage.getItem('wa_lvl');
       if (savedXP && savedLvl) {
@@ -75,12 +100,14 @@ function App() {
       }
     }).catch(e => {
         console.error(e);
-        setLoadingError("Erreur de connexion à l'API géographique. Vérifiez votre connexion internet.");
+        setLoadingError("Impossible de charger les données géographiques.");
         setIsLoading(false);
+        const loader = document.getElementById('app-loader');
+        if (loader) loader.style.display = 'none';
     });
   }, []);
 
-  // --- Game Loop (Timer) ---
+  // --- Game Loop ---
   useEffect(() => {
     if (gameState.status === 'playing') {
       timerRef.current = setInterval(() => {
@@ -92,7 +119,6 @@ function App() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [gameState.status]);
 
-  // --- Audio Ambience Effect ---
   useEffect(() => {
     audioService.setEnabled(soundEnabled);
   }, [soundEnabled]);
@@ -116,7 +142,7 @@ function App() {
   };
 
   const triggerRing = (coords: { lat: number, lng: number }) => {
-      const newRing = { lat: coords.lat, lng: coords.lng, maxR: 15, propagationSpeed: 5, repeatPeriod: 0 };
+      const newRing = { lat: coords.lat, lng: coords.lng };
       setRings(prev => [...prev, newRing]);
       setTimeout(() => {
           setRings(prev => prev.filter(r => r !== newRing));
@@ -160,7 +186,14 @@ function App() {
         newXP -= needed;
         newLvl++;
         audioService.playLevelUp();
-        addFloater("NIVEAU SUPÉRIEUR !", undefined, window.innerHeight/3, '#f72585');
+        addFloater("LEVEL UP!", undefined, window.innerHeight/2 - 100, '#f72585');
+        
+        confetti({
+            particleCount: 100,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#f72585', '#4cc9f0', '#FFD700']
+        });
       }
 
       localStorage.setItem('wa_xp', newXP.toString());
@@ -187,9 +220,15 @@ function App() {
     setSubset(newSubset);
     setFoundList([]);
     
-    // Set Camera Focus to Region IMMEDIATELY
+    // --- CINEMATIC INTRO ---
+    // 1. Start far away in space
+    setTargetLocation({ lat: 0, lng: 0, altitude: 3.5 });
+    
+    // 2. Zoom in to the target region after a brief moment
     const cam = REGION_CAMERAS[region] || REGION_CAMERAS['World'];
-    setTargetLocation(cam);
+    setTimeout(() => {
+       setTargetLocation(cam); 
+    }, 100);
 
     setGameState({
       status: 'playing',
@@ -205,8 +244,10 @@ function App() {
     setUserStats(prev => ({ ...prev, combo: 1 }));
     if(soundEnabled) audioService.startAmbience();
     
-    // Intro text
-    addFloater(mode === 'type' ? "ÉCRIVEZ LE NOM !" : "CLIQUEZ SUR LE PAYS !", window.innerWidth / 2, window.innerHeight / 2, '#4cc9f0');
+    // Show "Get Ready"
+    setTimeout(() => {
+      addFloater("GO !", window.innerWidth / 2, window.innerHeight / 2, '#4cc9f0');
+    }, 1000);
   };
 
   useEffect(() => {
@@ -223,22 +264,34 @@ function App() {
 
     const now = Date.now();
     let newCombo = 1;
-    if (now - userStats.lastGuessTime < 7000) {
+    if (now - userStats.lastGuessTime < 10000) {
         newCombo = userStats.combo + 1;
     }
     
     audioService.playCorrect();
     triggerRing(country.coords);
-    confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 }, colors: ['#4cc9f0', '#f72585'] });
-    addFloater(`+${10 * newCombo} XP`);
+    
+    confetti({ 
+        particleCount: 30, 
+        spread: 50, 
+        origin: { y: 0.8 }, 
+        colors: ['#4cc9f0', '#f72585', '#ffffff'],
+        scalar: 0.8,
+        disableForReducedMotion: true
+    });
+    
+    addFloater(newCombo > 1 ? `COMBO x${newCombo}!` : "BIEN JOUÉ !", undefined, undefined, '#4cc9f0');
     gainXP(10 * newCombo);
 
     setFoundList(prev => [country, ...prev]);
     setUserStats(prev => ({ ...prev, combo: newCombo, lastGuessTime: now }));
     
-    // Focus camera on found country
+    // Center camera on found country
     setTargetLocation({ lat: country.coords.lat, lng: country.coords.lng, altitude: 1.5 });
     
+    setInputValue('');
+    setHintIds(new Set()); // Clear visual hints
+
     const isWin = newFound.size === gameState.total;
 
     setGameState(prev => ({
@@ -272,6 +325,23 @@ function App() {
     setInputValue(rawVal);
     const val = normalizeString(rawVal);
 
+    // --- VISUAL HINTS LOGIC ---
+    // If the user types 2 chars or more, find matching countries
+    // and illuminate them on the globe
+    if (val.length >= 2) {
+        const potentialMatches = subset.filter(c => {
+            // Ignore already found
+            if (gameState.foundIds.has(c.id)) return false;
+            const name = normalizeString(c.frName);
+            return name.startsWith(val);
+        });
+        // Update the Set of IDs to highlight
+        setHintIds(new Set(potentialMatches.map(c => c.id)));
+    } else {
+        setHintIds(new Set());
+    }
+
+    // Exact match check
     let matchId = ALIASES[val];
     let matchedCountry = null;
 
@@ -283,7 +353,6 @@ function App() {
 
     if (matchedCountry) {
         handleSuccess(matchedCountry);
-        setInputValue('');
     }
   };
 
@@ -294,9 +363,10 @@ function App() {
           
           if (guessedCountry && guessedCountry.id !== gameState.targetCountry.id) {
              const { distance, arrow } = getDistanceAndBearing(guessedCountry, gameState.targetCountry);
-             addFloater(`${guessedCountry.frName}: ${distance}km ${arrow}`, undefined, window.innerHeight / 2 - 150, '#fbbf24');
+             addFloater(`${guessedCountry.frName}: ${distance}km ${arrow}`, undefined, window.innerHeight / 2 - 100, '#fbbf24');
              audioService.playRadarPing();
              setInputValue('');
+             setHintIds(new Set()); // Clear hints on error
              applyPenalty(5);
           } else if (!guessedCountry) {
              document.body.classList.add('animate-shake');
@@ -314,11 +384,10 @@ function App() {
         } else {
             handleFailure();
             applyPenalty(5);
-            const x = window.innerWidth / 2;
-            const y = window.innerHeight / 2;
-            addFloater(`Non, c'est ${country.frName}`, x, y - 100, '#ef4444');
+            addFloater(`Non, c'est ${country.frName}`, undefined, undefined, '#ef4444');
         }
     } else {
+        // En mode "Type", cliquer focalise l'input
         inputRef.current?.focus();
     }
   }, [gameState.status, gameState.mode, gameState.targetCountry, gameState.foundIds, subset]); 
@@ -352,17 +421,8 @@ function App() {
 
   const groupedFoundCountries = useMemo(() => {
     const groups: Record<string, CountryData[]> = {};
-    const regionMap: Record<string, string> = {
-      'Africa': 'Afrique',
-      'Americas': 'Amériques',
-      'Asia': 'Asie',
-      'Europe': 'Europe',
-      'Oceania': 'Océanie',
-      'Antarctic': 'Antarctique'
-    };
-
     foundList.forEach(country => {
-       const reg = regionMap[country.region] || country.region;
+       const reg = country.region; 
        if (!groups[reg]) groups[reg] = [];
        groups[reg].push(country);
     });
@@ -375,17 +435,18 @@ function App() {
   };
 
   return (
-    <div className="w-full h-[100dvh] bg-gradient-to-b from-slate-950 to-[#050a14] text-white overflow-hidden relative" ref={containerRef}>
+    <div className="w-full h-full text-white overflow-hidden relative" ref={containerRef}>
       
-      {/* 3D Scene */}
-      <div className="absolute inset-0 z-0">
+      {/* 3D Scene Layer */}
+      <div className={`absolute inset-0 z-0 transition-all duration-500 ${isSidebarOpen ? 'blur-sm opacity-30' : 'opacity-100'}`}>
         <Globe3D 
           countries={allCountries} 
           foundIds={gameState.foundIds}
+          hintIds={hintIds} // Passed to Globe for highlighting
           gameStatus={gameState.status}
           onPolygonClick={handlePolygonClick}
-          width={window.innerWidth}
-          height={window.innerHeight}
+          width={dimensions.width}
+          height={dimensions.height}
           targetLocation={targetLocation}
           rings={rings}
         />
@@ -394,119 +455,116 @@ function App() {
       {/* Loading Error */}
       {loadingError && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-black/90">
-              <div className="text-center max-w-md">
+              <div className="text-center max-w-md border border-red-500/30 p-8 rounded-3xl bg-red-500/5 backdrop-blur-xl">
                   <div className="text-red-500 text-5xl mb-4">⚠️</div>
-                  <h2 className="text-2xl font-bold text-white mb-2">Erreur de Chargement</h2>
+                  <h2 className="text-2xl font-bold text-white mb-2">Erreur Système</h2>
                   <p className="text-slate-400 mb-6">{loadingError}</p>
-                  <button onClick={() => window.location.reload()} className="px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-xl">Réessayer</button>
+                  <button onClick={() => window.location.reload()} className="px-8 py-3 bg-red-500 hover:bg-red-400 text-white font-bold rounded-xl transition-all">Relancer</button>
               </div>
           </div>
       )}
 
       {/* HUD Layer */}
       {!loadingError && (
-          <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 pb-safe safe-area">
+          <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-3 md:p-4 pb-safe safe-area transition-all duration-300">
             
             {/* Top Bar */}
-            <div className="flex justify-between items-start">
+            <div className={`flex justify-between items-start pt-safe transition-all duration-500 ${isInputFocused ? '-translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
+                
                 {/* Stats Card */}
                 <div 
                     onClick={() => setSidebarOpen(true)}
-                    className="glass-panel px-5 py-3 rounded-2xl flex flex-col gap-1 min-w-[160px] pointer-events-auto cursor-pointer hover:bg-white/10 transition-colors group shadow-lg"
+                    className="glass-panel px-4 py-3 rounded-2xl flex flex-col gap-1 min-w-[140px] pointer-events-auto cursor-pointer hover:bg-white/10 transition-colors group shadow-2xl border-t border-white/20"
                 >
-                    <div className="flex justify-between text-xs font-bold text-slate-400 uppercase tracking-wider group-hover:text-white transition-colors">
-                        <span>Niveau {userStats.level}</span>
-                        <span className={`font-mono transition-colors duration-300 ${penaltyFlash ? 'text-orange-500 scale-110' : 'text-white'}`}>
+                    <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-white transition-colors">
+                        <span>Lvl {userStats.level}</span>
+                        <span className={`font-mono transition-colors duration-300 ${penaltyFlash ? 'text-orange-500' : 'text-white'}`}>
                             {formatTime(gameState.timer)}
                         </span>
                     </div>
-                    <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mt-1">
+                    <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1">
                         <div 
-                            className="h-full bg-gradient-to-r from-cyan-400 to-pink-500 transition-all duration-500"
+                            className="h-full bg-gradient-to-r from-cyan-400 to-blue-500 shadow-[0_0_10px_#22d3ee]"
                             style={{ width: `${(userStats.xp / (userStats.level * 100)) * 100}%` }}
                         />
                     </div>
-                    <div className="flex justify-between items-baseline mt-1">
-                        <span className="text-2xl font-black">{gameState.score}<span className="text-sm text-slate-500">/{gameState.total}</span></span>
+                    <div className="flex justify-between items-end mt-2">
+                        <span className="text-3xl font-black text-white leading-none">{gameState.score}<span className="text-sm text-slate-500 ml-1">/{gameState.total}</span></span>
                     </div>
                 </div>
 
-                {/* Top Right Controls */}
-                <div className="flex items-center gap-3 pointer-events-auto">
-                    <div className={`transition-all duration-300 transform ${userStats.combo > 1 ? 'opacity-100 scale-100' : 'opacity-0 scale-75'}`}>
-                        <div className="text-right mr-2">
-                            <div className="text-3xl font-black text-pink-500 leading-none drop-shadow-glow">x{userStats.combo}</div>
-                            <div className="text-[10px] font-bold uppercase tracking-widest">Combo</div>
+                {/* Controls */}
+                <div className="flex items-center gap-2 pointer-events-auto">
+                    {userStats.combo > 1 && (
+                         <div className="glass-panel px-3 py-1 rounded-xl mr-2 animate-in slide-in-from-right-4 flex flex-col items-center border-pink-500/30 shadow-[0_0_15px_rgba(247,37,133,0.2)] bg-pink-500/10">
+                            <span className="text-[8px] font-bold uppercase text-pink-500 tracking-widest">Combo</span>
+                            <span className="text-xl font-black text-white italic">x{userStats.combo}</span>
                         </div>
-                    </div>
+                    )}
 
-                    <button onClick={() => setSoundEnabled(!soundEnabled)} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all">
+                    <button onClick={() => setSoundEnabled(!soundEnabled)} className="w-12 h-12 glass-panel rounded-2xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all text-cyan-400 hover:text-white border-white/10">
                         {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
                     </button>
-                    <button onClick={() => setSidebarOpen(true)} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all relative">
+                    <button onClick={() => setSidebarOpen(true)} className="w-12 h-12 glass-panel rounded-2xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all relative text-cyan-400 hover:text-white border-white/10">
                         <ListIcon size={20} />
-                        {foundList.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-cyan-400 rounded-full animate-pulse"></span>}
+                        {foundList.length > 0 && <span className="absolute top-3 right-3 w-1.5 h-1.5 bg-cyan-400 rounded-full shadow-[0_0_5px_#22d3ee]"></span>}
                     </button>
-                    <button onClick={handleMenuReturn} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all">
+                    <button onClick={handleMenuReturn} className="w-12 h-12 glass-panel rounded-2xl flex items-center justify-center hover:bg-red-500/20 active:scale-95 transition-all text-slate-400 hover:text-white border-white/10">
                         <Home size={20} />
                     </button>
                 </div>
             </div>
 
             {/* Bottom Bar */}
-            <div className="flex flex-col items-center gap-4 pointer-events-auto w-full max-w-lg mx-auto mb-safe">
+            <div className={`flex flex-col items-center gap-4 pointer-events-auto w-full max-w-xl mx-auto mb-safe transition-all duration-300 ${isInputFocused ? 'translate-y-0' : 'translate-y-0'}`}>
                 
                 {/* Click Mode Prompt */}
                 {gameState.status === 'playing' && gameState.mode === 'click' && gameState.targetCountry && (
-                    <div className="glass-panel px-8 py-4 rounded-full animate-in slide-in-from-bottom-4 flex items-center gap-4 shadow-2xl border border-cyan-500/30 backdrop-blur-xl">
-                        <span className="text-slate-400 text-xs uppercase font-bold tracking-widest">Cible</span>
+                    <div className="glass-panel px-6 py-4 rounded-full animate-in slide-in-from-bottom-4 flex items-center gap-4 shadow-2xl border border-cyan-500/30 backdrop-blur-xl">
+                        <span className="text-cyan-400 text-[10px] uppercase font-black tracking-[0.2em] hidden xs:block">Cible</span>
                         <div className="flex items-center gap-3">
-                            <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
+                            <span className="text-2xl font-black text-white drop-shadow-lg">
                                 {gameState.targetCountry.frName}
                             </span>
-                            {gameState.targetCountry.flag && <img src={gameState.targetCountry.flag} className="h-6 w-auto rounded shadow-sm" alt="flag hint" />}
+                            {gameState.targetCountry.flag && <img src={gameState.targetCountry.flag} className="h-6 w-auto rounded border border-white/20 shadow-sm" alt="flag" />}
                         </div>
                     </div>
                 )}
 
-                {/* Input & Hints */}
+                {/* Input Area */}
                 {gameState.status === 'playing' && (
-                    <div className="w-full flex gap-3 items-stretch">
+                    <div className="w-full flex gap-3 items-stretch px-2 md:px-0">
                         {gameState.mode === 'type' && (
-                            <div className="flex-1 glass-panel rounded-2xl p-1 pl-5 flex items-center focus-within:ring-2 ring-cyan-400/50 transition-all shadow-2xl relative">
+                            <div className={`flex-1 glass-panel rounded-2xl p-1 pl-5 flex items-center ring-1 ring-white/10 focus-within:ring-2 focus-within:ring-cyan-400 transition-all shadow-2xl relative bg-slate-900/80`}>
                                 <input 
                                     ref={inputRef}
                                     type="text" 
                                     value={inputValue}
                                     onChange={handleTyping}
                                     onKeyDown={handleInputKeyDown}
-                                    placeholder="Nom du pays..." 
-                                    className="w-full bg-transparent border-none outline-none text-white font-bold h-12 placeholder:text-slate-500 placeholder:font-normal text-lg"
-                                    autoFocus
+                                    onFocus={() => setIsInputFocused(true)}
+                                    onBlur={() => setIsInputFocused(false)}
+                                    placeholder={isInputFocused ? "" : "Entrez un pays..."}
+                                    className="w-full bg-transparent border-none outline-none text-white font-bold h-12 placeholder:text-slate-600 placeholder:font-bold text-lg uppercase tracking-wide"
                                     autoComplete="off"
                                     autoCorrect="off"
                                     spellCheck="false"
                                 />
-                                {/* Clear Button */}
                                 {inputValue && (
                                     <button 
-                                        onClick={() => { setInputValue(''); inputRef.current?.focus(); }}
-                                        className="p-2 text-slate-500 hover:text-white transition-colors mr-2"
+                                        onClick={() => { setInputValue(''); setHintIds(new Set()); inputRef.current?.focus(); }}
+                                        className="p-3 text-slate-500 hover:text-white transition-colors mr-1"
                                     >
                                         <X size={18} />
                                     </button>
                                 )}
-                                <div className="absolute right-4 text-[10px] text-slate-500 font-mono hidden sm:block pointer-events-none border border-white/10 px-2 py-1 rounded">
-                                    {inputValue.length > 0 ? "ENTRÉE : Radar" : "Saisie"}
-                                </div>
                             </div>
                         )}
 
                         {/* Hint Button */}
                         <button 
                             onClick={() => setShowHintModal(true)}
-                            className="w-14 glass-panel rounded-2xl flex items-center justify-center text-amber-500 hover:bg-amber-500/10 border-amber-500/30 active:scale-95 transition-all shadow-lg"
-                            title="Indices"
+                            className="w-14 glass-panel rounded-2xl flex items-center justify-center text-amber-400 hover:bg-amber-500/20 border-amber-500/30 active:scale-95 transition-all shadow-lg flex-shrink-0"
                         >
                             <Lightbulb size={24} strokeWidth={2.5} />
                         </button>
@@ -516,41 +574,43 @@ function App() {
           </div>
       )}
 
-      {/* Sidebar List */}
-      <div className={`fixed inset-y-0 right-0 w-80 bg-slate-950/95 backdrop-blur-xl border-l border-white/10 transform transition-transform duration-300 z-40 flex flex-col p-6 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'} shadow-2xl`}>
-        <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
+      {/* Sidebar */}
+      <div className={`fixed inset-y-0 right-0 w-full sm:w-96 bg-[#02040a]/95 backdrop-blur-xl border-l border-white/10 transform transition-transform duration-300 z-40 flex flex-col p-0 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'} shadow-[0_0_100px_rgba(0,0,0,0.8)]`}>
+        <div className="flex justify-between items-center p-6 border-b border-white/5 pt-safe">
             <div>
-                <h3 className="font-bold text-xl text-white">Exploration</h3>
-                <p className="text-xs text-cyan-400 font-bold uppercase tracking-wider">{foundList.length} pays découverts</p>
+                <h3 className="font-black text-2xl text-white tracking-tight">JOURNAL DE BORD</h3>
+                <p className="text-xs text-cyan-400 font-bold uppercase tracking-widest">{foundList.length} / {gameState.total} SÉCURISÉS</p>
             </div>
-            <button onClick={() => setSidebarOpen(false)} className="p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors"><X size={20}/></button>
+            <button onClick={() => setSidebarOpen(false)} className="p-3 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"><X size={24}/></button>
         </div>
         
-        <div className="flex-1 overflow-y-auto pr-2 pb-20 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 pb-20 custom-scrollbar">
             {foundList.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-64 text-slate-500 text-center italic px-6">
-                    <div className="mb-4 text-5xl opacity-20 grayscale">🌍</div>
-                    <p className="text-sm">Votre carnet de voyage est vide.<br/>Partez à l'aventure !</p>
+                <div className="flex flex-col items-center justify-center h-64 text-slate-600 text-center px-6 gap-4 opacity-50">
+                    <div className="p-6 rounded-full bg-slate-900/50 border border-white/5">
+                        <Home size={32} />
+                    </div>
+                    <p className="text-sm font-medium uppercase tracking-widest">Aucune donnée</p>
                 </div>
             ) : (
                 Object.keys(groupedFoundCountries).sort().map(region => (
-                    <div key={region} className="mb-6 animate-in fade-in slide-in-from-right-4">
-                        <div className="sticky top-0 bg-slate-950/95 backdrop-blur-md z-10 py-2 px-1 mb-2 border-b border-white/5 flex items-center gap-2">
-                            <span className="text-xs font-black text-cyan-400 uppercase tracking-widest">{region}</span>
-                            <span className="text-[10px] bg-white/10 px-1.5 rounded text-slate-400 font-mono">{groupedFoundCountries[region].length}</span>
+                    <div key={region} className="mb-8 animate-in fade-in slide-in-from-right-8 duration-300">
+                        <div className="flex items-center gap-3 mb-3 px-2">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">{region}</span>
+                            <div className="h-px flex-1 bg-gradient-to-r from-white/10 to-transparent"></div>
                         </div>
-                        <div className="grid grid-cols-1 gap-2">
+                        <div className="space-y-2">
                             {groupedFoundCountries[region].sort((a, b) => a.frName.localeCompare(b.frName)).map(c => (
                                 <div 
                                     key={c.id} 
-                                    onClick={() => setTargetLocation({ lat: c.coords.lat, lng: c.coords.lng, altitude: 1.5 })} 
-                                    className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 hover:border-cyan-400/50 hover:bg-white/10 transition-all cursor-pointer active:scale-98 group"
+                                    onClick={() => { setTargetLocation({ lat: c.coords.lat, lng: c.coords.lng, altitude: 1.5 }); setSidebarOpen(false); }} 
+                                    className="flex items-center gap-4 p-3 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-cyan-500/30 hover:bg-cyan-500/5 transition-all cursor-pointer active:scale-98 group"
                                 >
-                                    <img src={c.flag} alt={c.name} className="w-8 h-auto rounded shadow-sm group-hover:scale-110 transition-transform" loading="lazy" />
+                                    <img src={c.flag} alt={c.name} className="w-10 h-auto rounded shadow-sm group-hover:scale-105 transition-transform opacity-80 group-hover:opacity-100" loading="lazy" />
                                     <div className="flex-1 min-w-0">
-                                        <div className="font-semibold text-sm text-slate-200 truncate group-hover:text-white">{c.frName}</div>
+                                        <div className="font-bold text-slate-300 truncate group-hover:text-cyan-400 transition-colors">{c.frName}</div>
                                     </div>
-                                    <CheckCircle2 size={14} className="text-emerald-500/50" />
+                                    <CheckCircle2 size={16} className="text-emerald-500 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
                                 </div>
                             ))}
                         </div>
@@ -561,7 +621,6 @@ function App() {
       </div>
 
       {/* Modals */}
-      {/* SHOW START MODAL IF LOADING OR MENU */}
       {(gameState.status === 'menu' || gameState.status === 'loading') && !loadingError && (
           <StartModal onStart={startGame} isLoading={isLoading} />
       )}
@@ -579,7 +638,6 @@ function App() {
       {showHintModal && <HintModal onSelect={revealHint} onCancel={() => setShowHintModal(false)} />}
       {hintReveal && <RevealModal data={hintReveal} onClose={() => setHintReveal(null)} />}
 
-      {/* Effects */}
       <FloatingText floaters={floaters} onRemove={(id) => setFloaters(prev => prev.filter(f => f.id !== id))} />
       
       <style>{`
@@ -590,12 +648,11 @@ function App() {
             30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 
             40%, 60% { transform: translate3d(4px, 0, 0); } 
         }
-        .drop-shadow-glow { filter: drop-shadow(0 0 8px rgba(247, 37, 133, 0.5)); }
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 3px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-        /* Safe area spacing for mobile */
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        .pt-safe { padding-top: env(safe-area-inset-top); }
         .mb-safe { margin-bottom: env(safe-area-inset-bottom); }
       `}</style>
     </div>
