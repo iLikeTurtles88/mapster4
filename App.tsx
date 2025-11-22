@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import { Volume2, VolumeX, Lightbulb, Home, List as ListIcon, X, CheckCircle2 } from 'lucide-react';
@@ -15,6 +14,7 @@ function App() {
   // --- Data State ---
   const [allCountries, setAllCountries] = useState<CountryData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
 
   // --- Game State ---
   const [gameState, setGameState] = useState<GameState>({
@@ -73,7 +73,11 @@ function App() {
       if (savedXP && savedLvl) {
         setUserStats(prev => ({ ...prev, xp: parseInt(savedXP), level: parseInt(savedLvl) }));
       }
-    }).catch(e => alert("Erreur chargement données: " + e.message));
+    }).catch(e => {
+        console.error(e);
+        setLoadingError("Erreur de connexion à l'API géographique. Vérifiez votre connexion internet.");
+        setIsLoading(false);
+    });
   }, []);
 
   // --- Game Loop (Timer) ---
@@ -387,116 +391,130 @@ function App() {
         />
       </div>
 
+      {/* Loading Error */}
+      {loadingError && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-black/90">
+              <div className="text-center max-w-md">
+                  <div className="text-red-500 text-5xl mb-4">⚠️</div>
+                  <h2 className="text-2xl font-bold text-white mb-2">Erreur de Chargement</h2>
+                  <p className="text-slate-400 mb-6">{loadingError}</p>
+                  <button onClick={() => window.location.reload()} className="px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-xl">Réessayer</button>
+              </div>
+          </div>
+      )}
+
       {/* HUD Layer */}
-      <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 pb-safe safe-area">
-        
-        {/* Top Bar */}
-        <div className="flex justify-between items-start">
-            {/* Stats Card */}
-            <div 
-                onClick={() => setSidebarOpen(true)}
-                className="glass-panel px-5 py-3 rounded-2xl flex flex-col gap-1 min-w-[160px] pointer-events-auto cursor-pointer hover:bg-white/10 transition-colors group shadow-lg"
-            >
-                <div className="flex justify-between text-xs font-bold text-slate-400 uppercase tracking-wider group-hover:text-white transition-colors">
-                    <span>Niveau {userStats.level}</span>
-                    <span className={`font-mono transition-colors duration-300 ${penaltyFlash ? 'text-orange-500 scale-110' : 'text-white'}`}>
-                        {formatTime(gameState.timer)}
-                    </span>
-                </div>
-                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mt-1">
-                    <div 
-                        className="h-full bg-gradient-to-r from-cyan-400 to-pink-500 transition-all duration-500"
-                        style={{ width: `${(userStats.xp / (userStats.level * 100)) * 100}%` }}
-                    />
-                </div>
-                <div className="flex justify-between items-baseline mt-1">
-                    <span className="text-2xl font-black">{gameState.score}<span className="text-sm text-slate-500">/{gameState.total}</span></span>
-                </div>
-            </div>
-
-            {/* Top Right Controls */}
-            <div className="flex items-center gap-3 pointer-events-auto">
-                <div className={`transition-all duration-300 transform ${userStats.combo > 1 ? 'opacity-100 scale-100' : 'opacity-0 scale-75'}`}>
-                    <div className="text-right mr-2">
-                         <div className="text-3xl font-black text-pink-500 leading-none drop-shadow-glow">x{userStats.combo}</div>
-                         <div className="text-[10px] font-bold uppercase tracking-widest">Combo</div>
-                    </div>
-                </div>
-
-                <button onClick={() => setSoundEnabled(!soundEnabled)} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all">
-                    {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
-                </button>
-                <button onClick={() => setSidebarOpen(true)} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all relative">
-                    <ListIcon size={20} />
-                    {foundList.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-cyan-400 rounded-full animate-pulse"></span>}
-                </button>
-                 <button onClick={handleMenuReturn} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all">
-                    <Home size={20} />
-                </button>
-            </div>
-        </div>
-
-        {/* Bottom Bar */}
-        <div className="flex flex-col items-center gap-4 pointer-events-auto w-full max-w-lg mx-auto mb-safe">
+      {!loadingError && (
+          <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 pb-safe safe-area">
             
-            {/* Click Mode Prompt */}
-            {gameState.status === 'playing' && gameState.mode === 'click' && gameState.targetCountry && (
-                <div className="glass-panel px-8 py-4 rounded-full animate-in slide-in-from-bottom-4 flex items-center gap-4 shadow-2xl border border-cyan-500/30 backdrop-blur-xl">
-                    <span className="text-slate-400 text-xs uppercase font-bold tracking-widest">Cible</span>
-                    <div className="flex items-center gap-3">
-                        <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
-                            {gameState.targetCountry.frName}
+            {/* Top Bar */}
+            <div className="flex justify-between items-start">
+                {/* Stats Card */}
+                <div 
+                    onClick={() => setSidebarOpen(true)}
+                    className="glass-panel px-5 py-3 rounded-2xl flex flex-col gap-1 min-w-[160px] pointer-events-auto cursor-pointer hover:bg-white/10 transition-colors group shadow-lg"
+                >
+                    <div className="flex justify-between text-xs font-bold text-slate-400 uppercase tracking-wider group-hover:text-white transition-colors">
+                        <span>Niveau {userStats.level}</span>
+                        <span className={`font-mono transition-colors duration-300 ${penaltyFlash ? 'text-orange-500 scale-110' : 'text-white'}`}>
+                            {formatTime(gameState.timer)}
                         </span>
-                        {gameState.targetCountry.flag && <img src={gameState.targetCountry.flag} className="h-6 w-auto rounded shadow-sm" alt="flag hint" />}
+                    </div>
+                    <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mt-1">
+                        <div 
+                            className="h-full bg-gradient-to-r from-cyan-400 to-pink-500 transition-all duration-500"
+                            style={{ width: `${(userStats.xp / (userStats.level * 100)) * 100}%` }}
+                        />
+                    </div>
+                    <div className="flex justify-between items-baseline mt-1">
+                        <span className="text-2xl font-black">{gameState.score}<span className="text-sm text-slate-500">/{gameState.total}</span></span>
                     </div>
                 </div>
-            )}
 
-            {/* Input & Hints */}
-            {gameState.status === 'playing' && (
-                <div className="w-full flex gap-3 items-stretch">
-                     {gameState.mode === 'type' && (
-                         <div className="flex-1 glass-panel rounded-2xl p-1 pl-5 flex items-center focus-within:ring-2 ring-cyan-400/50 transition-all shadow-2xl relative">
-                            <input 
-                                ref={inputRef}
-                                type="text" 
-                                value={inputValue}
-                                onChange={handleTyping}
-                                onKeyDown={handleInputKeyDown}
-                                placeholder="Nom du pays..." 
-                                className="w-full bg-transparent border-none outline-none text-white font-bold h-12 placeholder:text-slate-500 placeholder:font-normal text-lg"
-                                autoFocus
-                                autoComplete="off"
-                                autoCorrect="off"
-                                spellCheck="false"
-                            />
-                            {/* Clear Button */}
-                            {inputValue && (
-                                <button 
-                                    onClick={() => { setInputValue(''); inputRef.current?.focus(); }}
-                                    className="p-2 text-slate-500 hover:text-white transition-colors mr-2"
-                                >
-                                    <X size={18} />
-                                </button>
-                            )}
-                            <div className="absolute right-4 text-[10px] text-slate-500 font-mono hidden sm:block pointer-events-none border border-white/10 px-2 py-1 rounded">
-                                {inputValue.length > 0 ? "ENTRÉE : Radar" : "Saisie"}
-                            </div>
-                         </div>
-                     )}
+                {/* Top Right Controls */}
+                <div className="flex items-center gap-3 pointer-events-auto">
+                    <div className={`transition-all duration-300 transform ${userStats.combo > 1 ? 'opacity-100 scale-100' : 'opacity-0 scale-75'}`}>
+                        <div className="text-right mr-2">
+                            <div className="text-3xl font-black text-pink-500 leading-none drop-shadow-glow">x{userStats.combo}</div>
+                            <div className="text-[10px] font-bold uppercase tracking-widest">Combo</div>
+                        </div>
+                    </div>
 
-                     {/* Hint Button */}
-                     <button 
-                        onClick={() => setShowHintModal(true)}
-                        className="w-14 glass-panel rounded-2xl flex items-center justify-center text-amber-500 hover:bg-amber-500/10 border-amber-500/30 active:scale-95 transition-all shadow-lg"
-                        title="Indices"
-                     >
-                        <Lightbulb size={24} strokeWidth={2.5} />
-                     </button>
+                    <button onClick={() => setSoundEnabled(!soundEnabled)} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all">
+                        {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                    </button>
+                    <button onClick={() => setSidebarOpen(true)} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all relative">
+                        <ListIcon size={20} />
+                        {foundList.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-cyan-400 rounded-full animate-pulse"></span>}
+                    </button>
+                    <button onClick={handleMenuReturn} className="w-10 h-10 glass-panel rounded-xl flex items-center justify-center hover:bg-white/10 active:scale-95 transition-all">
+                        <Home size={20} />
+                    </button>
                 </div>
-            )}
-        </div>
-      </div>
+            </div>
+
+            {/* Bottom Bar */}
+            <div className="flex flex-col items-center gap-4 pointer-events-auto w-full max-w-lg mx-auto mb-safe">
+                
+                {/* Click Mode Prompt */}
+                {gameState.status === 'playing' && gameState.mode === 'click' && gameState.targetCountry && (
+                    <div className="glass-panel px-8 py-4 rounded-full animate-in slide-in-from-bottom-4 flex items-center gap-4 shadow-2xl border border-cyan-500/30 backdrop-blur-xl">
+                        <span className="text-slate-400 text-xs uppercase font-bold tracking-widest">Cible</span>
+                        <div className="flex items-center gap-3">
+                            <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
+                                {gameState.targetCountry.frName}
+                            </span>
+                            {gameState.targetCountry.flag && <img src={gameState.targetCountry.flag} className="h-6 w-auto rounded shadow-sm" alt="flag hint" />}
+                        </div>
+                    </div>
+                )}
+
+                {/* Input & Hints */}
+                {gameState.status === 'playing' && (
+                    <div className="w-full flex gap-3 items-stretch">
+                        {gameState.mode === 'type' && (
+                            <div className="flex-1 glass-panel rounded-2xl p-1 pl-5 flex items-center focus-within:ring-2 ring-cyan-400/50 transition-all shadow-2xl relative">
+                                <input 
+                                    ref={inputRef}
+                                    type="text" 
+                                    value={inputValue}
+                                    onChange={handleTyping}
+                                    onKeyDown={handleInputKeyDown}
+                                    placeholder="Nom du pays..." 
+                                    className="w-full bg-transparent border-none outline-none text-white font-bold h-12 placeholder:text-slate-500 placeholder:font-normal text-lg"
+                                    autoFocus
+                                    autoComplete="off"
+                                    autoCorrect="off"
+                                    spellCheck="false"
+                                />
+                                {/* Clear Button */}
+                                {inputValue && (
+                                    <button 
+                                        onClick={() => { setInputValue(''); inputRef.current?.focus(); }}
+                                        className="p-2 text-slate-500 hover:text-white transition-colors mr-2"
+                                    >
+                                        <X size={18} />
+                                    </button>
+                                )}
+                                <div className="absolute right-4 text-[10px] text-slate-500 font-mono hidden sm:block pointer-events-none border border-white/10 px-2 py-1 rounded">
+                                    {inputValue.length > 0 ? "ENTRÉE : Radar" : "Saisie"}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Hint Button */}
+                        <button 
+                            onClick={() => setShowHintModal(true)}
+                            className="w-14 glass-panel rounded-2xl flex items-center justify-center text-amber-500 hover:bg-amber-500/10 border-amber-500/30 active:scale-95 transition-all shadow-lg"
+                            title="Indices"
+                        >
+                            <Lightbulb size={24} strokeWidth={2.5} />
+                        </button>
+                    </div>
+                )}
+            </div>
+          </div>
+      )}
 
       {/* Sidebar List */}
       <div className={`fixed inset-y-0 right-0 w-80 bg-slate-950/95 backdrop-blur-xl border-l border-white/10 transform transition-transform duration-300 z-40 flex flex-col p-6 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'} shadow-2xl`}>
@@ -543,7 +561,11 @@ function App() {
       </div>
 
       {/* Modals */}
-      {gameState.status === 'menu' && <StartModal onStart={startGame} isLoading={isLoading} />}
+      {/* SHOW START MODAL IF LOADING OR MENU */}
+      {(gameState.status === 'menu' || gameState.status === 'loading') && !loadingError && (
+          <StartModal onStart={startGame} isLoading={isLoading} />
+      )}
+      
       {gameState.status === 'finished' && (
         <EndModal 
             score={gameState.score} 
